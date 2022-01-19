@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Created on Fri Dec 06, 2019
-Hydrograph Scaling Script Functions (v5)
-@author: tclarkin (USBR 2021)
+Hydrograph Scaling Script, Functions  (v1)
+@author: USBR (tclarkin 2021)
 
-Functinos used in hydrograph scaling
-
+The supporting functions used in hydrograph scaling and hydorgraph pre scripts
 """
 import os
 import sys
@@ -16,6 +14,7 @@ import matplotlib as mpl
 import probscale
 import datetime as dt
 import dataretrieval.nwis as nwis
+
 
 def nwis_import(site, dtype, start=None, end=None, wy="WY"):
     """
@@ -34,53 +33,55 @@ def nwis_import(site, dtype, start=None, end=None, wy="WY"):
 
     data = pd.DataFrame()
 
-    if (start!=None) & (end!=None):
+    if (start != None) & (end != None):
         try:
             data = nwis.get_record(sites=site, start=start, end=end, service=dtype, parameterCd="00060")
         except ValueError:
             data["flow"] = np.nan
     else:
-        if (start==None) & (end==None):
+        if (start == None) & (end == None):
             try:
-                data = nwis.get_record(sites=site, start="1800-01-01",service=dtype, parameterCd="00060")
+                data = nwis.get_record(sites=site, start="1800-01-01", service=dtype, parameterCd="00060")
             except ValueError:
                 data["flow"] = np.nan
         else:
-            if end==None:
+            if end == None:
                 try:
-                    data = nwis.get_record(sites=site, start=start, end="3000-01-01", service=dtype, parameterCd="00060")
+                    data = nwis.get_record(sites=site, start=start, end="3000-01-01", service=dtype,
+                                           parameterCd="00060")
                 except ValueError:
                     data["flow"] = np.nan
-            if start==None:
+            if start == None:
                 try:
                     data = nwis.get_record(sites=site, start="1800-01-01", end=end, service=dtype, parameterCd="00060")
                 except ValueError:
                     data["flow"] = np.nan
 
-    data.index = pd.to_datetime(data.index,utc=True)
-    #data = data.tz_localize("UTC")
+    data.index = pd.to_datetime(data.index, utc=True)
+    # data = data.tz_localize("UTC")
     end = data.index.max()
     start = data.index.min()
 
     if dtype == "dv":
-        date_index = pd.to_datetime(pd.date_range(start, end, freq="D"),utc=True)
+        date_index = pd.to_datetime(pd.date_range(start, end, freq="D"), utc=True)
     elif dtype == "iv":
-        date_index = pd.to_datetime(pd.date_range(start, end, freq="15T"),utc=True)
+        date_index = pd.to_datetime(pd.date_range(start, end, freq="15T"), utc=True)
 
     out = pd.DataFrame(index=date_index)
-    #out = out.tz_localize("UTC")
+    # out = out.tz_localize("UTC")
     out["flow"] = out.merge(data[parameter], left_index=True, right_index=True, how="left")
 
-    out.loc[out["flow"]==-999999,"flow"] = np.nan
+    out.loc[out["flow"] == -999999, "flow"] = np.nan
 
     # Add year, month and wy
     out["year"] = pd.DatetimeIndex(out.index).year
     out["month"] = pd.DatetimeIndex(out.index).month
     out["wy"] = out["year"]
-    if wy=="WY":
+    if wy == "WY":
         out.loc[out["month"] >= 10, "wy"] = out.loc[out["month"] >= 10, "year"] + 1
 
-    return(out)
+    return (out)
+
 
 def analyze_voldur(data, dur):
     """
@@ -92,42 +93,42 @@ def analyze_voldur(data, dur):
     var = data.columns[0]
     WYs = data["wy"].unique().astype(int)
     evs = pd.DataFrame(index=WYs)
-    if dur=="WY":
+    if dur == "WY":
         print('Analyzing by WY')
         for wy in WYs:
-            if sum(pd.isna(data.loc[data["wy"] == wy, var])) > 365*0.1:
+            if sum(pd.isna(data.loc[data["wy"] == wy, var])) > 365 * 0.1:
                 continue
             else:
                 if dur == "WY":
                     evs.loc[wy, "annual_sum"] = round(data.loc[data["wy"] == wy, var].sum(), 0)
                     evs.loc[wy, "annual_acft"] = round(data.loc[data["wy"] == wy, var].sum() * 86400 / 43560, 0)
-                    evs.loc[wy, "count"] = len(data.loc[data["wy"]==wy, var])
+                    evs.loc[wy, "count"] = len(data.loc[data["wy"] == wy, var])
                     max_idx = data.loc[data["wy"] == wy, var].idxmax()
                     evs.loc[wy, "max"] = max_idx
                     evs.loc[wy, f"max_{var}"] = round(data.loc[max_idx, var], 0)
     else:
-        dur_data = data[var].rolling(dur,min_periods=int(np.ceil(dur*0.90))).mean()
-        data["wy_shift"] = data["wy"].shift(+(int(dur/2)))
+        dur_data = data[var].rolling(dur, min_periods=int(np.ceil(dur * 0.90))).mean()
+        data["wy_shift"] = data["wy"].shift(+(int(dur / 2)))
 
         for wy in WYs:
-                try:
-                    max_idx = dur_data.loc[data["wy_shift"]==wy].idxmax()
-                except ValueError:
-                    continue
-                if pd.isna(max_idx):
-                    continue
-                evs.loc[wy,"start"] = max_idx-dt.timedelta(days=int(dur)-1) # place date as start of window
-                evs.loc[wy,f"avg_{var}"] = round(dur_data[max_idx],0)
-                evs.loc[wy, "mid"] = max_idx - dt.timedelta(days=int(dur / 2) - 1)  # place date as middle of window
-                evs.loc[wy, "end"] = max_idx  # place date as end of window
-                evs.loc[wy, "max"] = data.loc[evs.loc[wy, "start"]:evs.loc[wy, "end"],var].idxmax()
-                evs.loc[wy,f"max_{var}"] = data.loc[evs.loc[wy,"max"],var]
-                evs.loc[wy,"count"] = len(data.loc[data["wy"] == wy, var])
-
+            try:
+                max_idx = dur_data.loc[data["wy_shift"] == wy].idxmax()
+            except ValueError:
+                continue
+            if pd.isna(max_idx):
+                continue
+            evs.loc[wy, "start"] = max_idx - dt.timedelta(days=int(dur) - 1)  # place date as start of window
+            evs.loc[wy, f"avg_{var}"] = round(dur_data[max_idx], 0)
+            evs.loc[wy, "mid"] = max_idx - dt.timedelta(days=int(dur / 2) - 1)  # place date as middle of window
+            evs.loc[wy, "end"] = max_idx  # place date as end of window
+            evs.loc[wy, "max"] = data.loc[evs.loc[wy, "start"]:evs.loc[wy, "end"], var].idxmax()
+            evs.loc[wy, f"max_{var}"] = data.loc[evs.loc[wy, "max"], var]
+            evs.loc[wy, "count"] = len(data.loc[data["wy"] == wy, var])
 
     return (evs)
 
-def hydroclip(hfile,hydro_sel,duration):
+
+def hydroclip(hfile, hydro_sel, duration):
     """
     This function opens the file and extracts the selected hydrographs. If hydrograph durations are longer than the
     specified duration, they will be clipped.
@@ -138,7 +139,7 @@ def hydroclip(hfile,hydro_sel,duration):
     """
     hydro_raw = pd.read_csv(hfile)
     # create output array
-    if hydro_sel=="all":
+    if hydro_sel == "all":
         hydro_sel = hydro_raw.columns
     hydro_clip = np.zeros((duration, len(hydro_sel)))
 
@@ -149,7 +150,7 @@ def hydroclip(hfile,hydro_sel,duration):
 
     # if equal, use
     if len(hydro_raw) == duration:
-        for h in range(0,len(hydro_sel)):
+        for h in range(0, len(hydro_sel)):
             if hydro_sel[h] in hydro_raw.columns:
                 hydro_clip[:, h] = hydro_raw.loc[:, hydro_sel[h]]
             else:
@@ -159,20 +160,21 @@ def hydroclip(hfile,hydro_sel,duration):
 
     # if too long, clip
     else:
-        for h in range(0,len(hydro_sel)):
+        for h in range(0, len(hydro_sel)):
             if hydro_sel[h] in hydro_raw.columns:
                 # Find peak critical duration period
                 vol_cd = hydro_raw.loc[:, hydro_sel[h]].rolling(duration).mean()
                 vol_p_end = vol_cd.idxmax()
-                vol_p_beg = vol_p_end - duration+1
-                hydro_clip[:,h] = hydro_raw.loc[vol_p_beg:vol_p_end, hydro_sel[h]].values
+                vol_p_beg = vol_p_end - duration + 1
+                hydro_clip[:, h] = hydro_raw.loc[vol_p_beg:vol_p_end, hydro_sel[h]].values
             else:
                 print(f"{h} missing from hydrograph column names")
                 hydro_clip[:, h] = np.nan
                 continue
-    return hydro_clip,hydro_sel
+    return hydro_clip, hydro_sel
 
-def importfreq(ffile,vfile,rp_sel):
+
+def importfreq(ffile, vfile, rp_sel):
     """
     This function opens the files containing frequency information, checks for consistent length, and puts in format
     used by script.
@@ -189,18 +191,24 @@ def importfreq(ffile,vfile,rp_sel):
     vfa_raw = pd.read_csv(vfile)
 
     # Define rps, check that rps for vfa and ffa are identical
-    if all(ffa_raw.iloc[:,0] == vfa_raw.iloc[:,0]):
+    if all(ffa_raw.iloc[:, 0] == vfa_raw.iloc[:, 0]):
         print("Return Periods Match: extracting selected return periods")
         rps = ffa_raw.loc[:, "rp"]
-        rps_in = np.array(rps.loc[rps.isin(rp_sel),])
-        ffa = ffa_raw.loc[rps.isin(rp_sel),].reset_index(drop=True)
-        vfa = vfa_raw.loc[rps.isin(rp_sel),].reset_index(drop=True)
-        aep = (1 / rps_in) * 100
+        if rp_sel == "all":
+            ffa = ffa_raw
+            vfa = vfa_raw
+            aep = (1 / rps) * 100
+        else:
+            rps = np.array(rps.loc[rps.isin(rp_sel),])
+            ffa = ffa_raw.loc[rps.isin(rp_sel),].reset_index(drop=True)
+            vfa = vfa_raw.loc[rps.isin(rp_sel),].reset_index(drop=True)
+            aep = (1 / rps) * 100
     else:
         sys.exit("Return Periods for FFA and VFA do not match; please correct and try again.")
-    return ffa,vfa,rps_in,aep
+    return ffa, vfa, rps, aep
 
-def adj_baseflow(output,hydro,vol_method=0):
+
+def adj_baseflow(output, hydro, vol_method=0):
     """
     This function adjusts beginning and ending flows to transition smoothly from baseflow (the original ending and
     beginning flows on the input hydrograph).
@@ -246,8 +254,8 @@ def adj_baseflow(output,hydro,vol_method=0):
     output[end:duration] = np.ceil(t_steps * hydro[end:duration])
 
     # Check if volume correction needed
-    if abs(check_error(output.sum(),v_rp)) > 0.0001:  # greater than 0.0001 or 0.01% in CFS
-        print(f"Baseflow adjusted volumes do not agree: {round(abs(check_error(output.sum(),v_rp)), 6)} error")
+    if abs(check_error(output.sum(), v_rp)) > 0.0001:  # greater than 0.0001 or 0.01% in CFS
+        print(f"Baseflow adjusted volumes do not agree: {round(abs(check_error(output.sum(), v_rp)), 6)} error")
         if vol_method > 0:
             print(f"Correcting volumes using method {vol_method}")
             # Check total volume and baseflow volume
@@ -266,9 +274,9 @@ def adj_baseflow(output,hydro,vol_method=0):
                 v_bfp = v_bf + peak_rp
 
                 # Correct volume, only modifying flows outside of the baseflow AND peak
-                v_ratio = (v_rp - v_bfp) / (sum(output[start+1:end-1])-peak_rp)
-                output[start+1:peak_idx-1] = np.ceil(v_ratio * output[start+1:peak_idx-1])
-                output[peak_idx+1:end-1] = np.ceil(v_ratio * output[peak_idx+1:end-1])
+                v_ratio = (v_rp - v_bfp) / (sum(output[start + 1:end - 1]) - peak_rp)
+                output[start + 1:peak_idx - 1] = np.ceil(v_ratio * output[start + 1:peak_idx - 1])
+                output[peak_idx + 1:end - 1] = np.ceil(v_ratio * output[peak_idx + 1:end - 1])
                 output[peak_idx] = peak_rp
 
                 # Check volume again...
@@ -290,11 +298,19 @@ def adj_baseflow(output,hydro,vol_method=0):
 
     return output
 
-def check_error(estimate,real):
-    error = (estimate-real)/real
+
+def check_error(estimate, real):
+    """
+    Calculates error (decimal)
+    :param estimate: numeric, estimated value
+    :param real: numeric, real value
+    :return: numeric, error (decimal)
+    """
+    error = (estimate - real) / real
     return error
 
-def peak_scale(peak_rp,hydro,baseflow=False):
+
+def peak_scale(peak_rp, hydro, baseflow=False):
     """
     The concept of peak scaling is simple: multiply the entire hydrograph by the ratio of the desired peak over the
     input hydrograph peak.
@@ -311,16 +327,17 @@ def peak_scale(peak_rp,hydro,baseflow=False):
 
     # Second, fix baseflow transition (if selected)
     if baseflow:
-        output = adj_baseflow(output,hydro,vol_method=0)
+        output = adj_baseflow(output, hydro, vol_method=0)
 
     # Third, check if peak is correct
-    if abs(check_error(output.max(),peak_rp)) > 0.0001:  # greater than 0.0001 or 0.01%
-        print(f"Peaks do not agree: {round(abs(check_error(output.max(),peak_rp)), 6)} error")
+    if abs(check_error(output.max(), peak_rp)) > 0.0001:  # greater than 0.0001 or 0.01%
+        print(f"Peaks do not agree: {round(abs(check_error(output.max(), peak_rp)), 6)} error")
     else:
         print("Peak scaling successful.")
     return output
 
-def vol_scale(Q_rp,hydro,baseflow=False,partial=False):
+
+def vol_scale(Q_rp, hydro, baseflow=False, partial=False):
     """
     The concept of volume scaling is simple: multiply the entire hydrograph by the ratio of the desired volume over the
     input hydrograph volume.
@@ -328,11 +345,12 @@ def vol_scale(Q_rp,hydro,baseflow=False,partial=False):
     :param peak_rp: float, the desired peak
     :param hydro: 1D array, the input hydrograph
     :param baseflow: boolean, option to smooth beginning and end of hydrographs for baseflow transition
+    :param partial: boolean, option to scale entire hydrograph based on calculations for portion of hydrograph
     :return: 1D array, the scaled hydrograph
     """
     # First, scale by volume
     # If hydrograph duration = volume duration
-    if partial==False:
+    if partial == False:
         Q_hydro = np.mean(hydro)
     # If not, determine mean flow for duration
     else:
@@ -347,16 +365,17 @@ def vol_scale(Q_rp,hydro,baseflow=False,partial=False):
 
     # Second, fix baseflow transition (if selected) and correct volumes
     if baseflow:
-        output = adj_baseflow(output,hydro,vol_method=1)
+        output = adj_baseflow(output, hydro, vol_method=1)
 
     # Third, check if volume is correct
-    if abs(check_error(output.mean(),Q_rp)) > 0.0001:  # greater than 0.0001 or 0.01% in CFS
-        print(f"Volumes do not agree: {round(abs(check_error(output.mean(),Q_rp)), 6)} error")
+    if abs(check_error(output.mean(), Q_rp)) > 0.0001:  # greater than 0.0001 or 0.01% in CFS
+        print(f"Volumes do not agree: {round(abs(check_error(output.mean(), Q_rp)), 6)} error")
     else:
         print("Volume scaling successful.")
     return output
 
-def pav_scale(peak_rp,Q_rp, hydro, baseflow=False, partial=False):
+
+def pav_scale(peak_rp, Q_rp, hydro, baseflow=False, partial=False):
     """
     The concept of peak and volume scaling is scaling the hydrograph to the peak, then correct the rest of the
     hydrograph ordinates to have the correct volume.
@@ -365,54 +384,17 @@ def pav_scale(peak_rp,Q_rp, hydro, baseflow=False, partial=False):
     :param Q_rp: float, the desired volume (average flow)
     :param hydro: 1D array, the input hydrograph
     :param baseflow: boolean, option to smooth beginning and end of hydrographs for baseflow transition
+    :param partial: boolean, option to scale entire hydrograph based on calculations for portion of hydrograph
     :return: 1D array, the scaled hydrograph
-
-    Let's define some terms:
-        Q_rp is the mean flow desired (in this case, for the return period)
-        Q_s is the mean flow of the scaled hydrograph
-        q_h represent the original hydrograph (an array of hourly flows)
-        q_s represents the scaled hydrograph
-        q_max represents the maximum flow in q_h
-
-    The goal is a function that can be applied to q_h to maintain the peak (q_max) and produce the desired volume (Q_rp)
-    Because we do not want to adjust the peak, the function should be based on values proximity to the peak, thus, we'll
-    use the term q_r to represent relative flows:
-
-        q_r = q_max - q_h
-
-    note, the values of q_r should ALWAYS be positive.
-
-    So, using the equation of a line:
-
-        q_s = m(q_r) + b
-        q_s = m(q_max - q_h) + b                        (1)
-
-    Since we do not want any changes to the peak (no multiplication), we'll assumed q_s = q_max when q_h = q_max. Thus:
-
-        q_s = m(q_max - q_h) + q_max                    (2)
-
-    Now, the goal is to solve for the mean of q_s. Thus:
-
-        Q_s = sigma(m(q_max - q_h) + q_max)/N           (3)
-
-    where N is the number of observations (critical duration in timesteps).
-
-    Set Q_s = Q_rp and we get:
-
-        Q_rp = sigma(m(q_max - q_h) + q_max)/N          (4)
-
-    Fianlly, solve for m:
-        m = (Q_rp*N-sigma(q_max))/sigma(q_max-q_h)   (5)
-
     """
     # First, scale by peak
-    output = peak_scale(peak_rp,hydro,baseflow=False)
+    output = peak_scale(peak_rp, hydro, baseflow=False)
 
     # Second, use equation 5 to scale volume
     N = len(output)
     q_max = output.max()
     # If hydrograph duration = volume duration
-    if partial==False:
+    if partial == False:
         m = (Q_rp * N - q_max * N) / sum(q_max - output)
 
     # If not, determine mean flow for duration
@@ -427,7 +409,7 @@ def pav_scale(peak_rp,Q_rp, hydro, baseflow=False, partial=False):
 
     # Third, fix baseflow transition (if selected) and correct volumes
     if baseflow:
-        output = adj_baseflow(output,hydro,vol_method=0)
+        output = adj_baseflow(output, hydro, vol_method=0)
 
     # Fix negative flows
     if (any(output < 1)) or (pd.isna(output).any()):
@@ -435,17 +417,18 @@ def pav_scale(peak_rp,Q_rp, hydro, baseflow=False, partial=False):
         output[output == np.nan] = 1
 
     # Fourth, check if peak and volume are correct
-    if abs(check_error(output.mean(),Q_rp)) > 0.0001:  # greater than 0.0001 or 0.01% in CFS
-        print(f"Volumes do not agree: {round(abs(check_error(output.mean(),Q_rp)), 6)} error")
+    if abs(check_error(output.mean(), Q_rp)) > 0.0001:  # greater than 0.0001 or 0.01% in CFS
+        print(f"Volumes do not agree: {round(abs(check_error(output.mean(), Q_rp)), 6)} error")
     else:
         print("Volume scaling successful.")
-    if abs(check_error(output.max(),peak_rp)) > 0.0001:  # greater than 0.0001 or 0.01%
-        print(f"Peaks do not agree: {round(abs(check_error(output.max(),peak_rp)), 6)} error")
+    if abs(check_error(output.max(), peak_rp)) > 0.0001:  # greater than 0.0001 or 0.01%
+        print(f"Peaks do not agree: {round(abs(check_error(output.max(), peak_rp)), 6)} error")
     else:
         print("Peak scaling successful.")
     return output
 
-def get_balanced_indices(vfa_durs,hydro):
+
+def get_balanced_indices(vfa_durs, hydro):
     """
     This function identifies the beginning and end of the volume frequency windows
 
@@ -470,7 +453,7 @@ def get_balanced_indices(vfa_durs,hydro):
     return vfa_tab
 
 
-def balanced_scale(peak_rp,vfa_rp,hydro,balanced_idx,peak_type="peaked",baseflow=True,plot_construct=False):
+def balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, peak_type="peaked", baseflow=True, plot_construct=False):
     """
     The concept of balanced is similar to peak and volume scaling is simple, except instead of reserving only the peak,
     we reserve successively larger windows for the shorter durations
@@ -483,50 +466,6 @@ def balanced_scale(peak_rp,vfa_rp,hydro,balanced_idx,peak_type="peaked",baseflow
     :param baseflow: boolean, option to smooth beginning and end of hydrographs for baseflow transition
     :param plot_construct: boolean, show plots of balanced hydrograph construction
     :return: 1D array, the scaled hydrograph
-
-    Let's define some terms:
-        Q_rp is the mean flow desired (in this case, for the return period)
-        Q_s is the mean flow of the scaled hydrograph
-        q_h represent the original or intermediate hydrograph (an array of hourly flows)
-        q_s represents the scaled hydrograph
-        q_max represents the maximum flow in q_h
-
-    The goal is a function that can be applied to q_h to maintain the peak (q_max) and produce the desired volume (Q_rp)
-    Because we do not want to adjust the peak, the function should be based on values proximity to the peak, thus, we'll
-    use the term q_r to represent relative flows:
-
-        q_r = q_max - q_h
-
-    note, the values of q_r should ALWAYS be positive.
-
-    So, using the equation of a line:
-
-        q_s = m(q_r) + b
-        q_s = m(q_max - q_h) + b                        (1)
-
-    Since we do not want any changes to the peak (no multiplication), we'll assumed q_s = q_max when q_h = q_max. Thus:
-
-        q_s = m(q_max - q_h) + q_max                    (2)
-
-    This is where we begin to differ from peak and volume scaling. Let's define some terms:
-        q_max represents the maximum flow for the intermediate hydrograph (an array of hourly flows) BEING adjusted
-        q_h represent the portion of the hydrograph (an array of hourly flows) BEING adjusted
-        q_d represent the portion of the hydrograph (an array of hourly flows) NOT being adjusted
-
-    Now, the goal is to solve for the mean of q_s, where Q_s = mean(q_h, q_d). Thus:
-
-        Q_s = (sigma(m(q_max - q_h) + q_max) + sigma(q_d))/(N1 + N2)           (3)
-
-    where N1 is the number of observations in q_d and N2 is the number of observations in q_h
-
-    Set Q_s = Q_rp and we get:
-
-        Q_rp = (sigma(m(q_max - q_h) + q_max) + sigma(q_d))/(N1 + N2)          (4)
-
-    Finally, solve for m:
-
-        m = (Q_rp*(N1+N2)-sigma(q_max)-sigma(Qd))/sigma(q_max-q_h)   (5)
-
     """
     if plot_construct:
         # Check for plot construct directory
@@ -534,7 +473,7 @@ def balanced_scale(peak_rp,vfa_rp,hydro,balanced_idx,peak_type="peaked",baseflow
             os.mkdir("pc")
         itr = 1
 
-    vfa_durs = balanced_idx[:,0]
+    vfa_durs = balanced_idx[:, 0]
 
     # First, scale the peak
     peak_idx = hydro.argmax()
@@ -544,7 +483,7 @@ def balanced_scale(peak_rp,vfa_rp,hydro,balanced_idx,peak_type="peaked",baseflow
     # If peak_type is spiked, only adjust peak hour
     if peak_type == "spiked":
         output[0:peak_idx] = hydro[0:peak_idx]
-        output[peak_idx+1:duration] = hydro[peak_idx+1:duration]
+        output[peak_idx + 1:duration] = hydro[peak_idx + 1:duration]
 
     # If plot_construct is true, plot construction of balanced hydrograph
     if plot_construct:
@@ -555,12 +494,14 @@ def balanced_scale(peak_rp,vfa_rp,hydro,balanced_idx,peak_type="peaked",baseflow
         ax.grid()
 
         # Plot locations
-        plt.fill_between([peak_idx-0.5,peak_idx+0.5],[peak_rp,peak_rp],color="grey",alpha=0.3,label="Peak Location")
+        plt.fill_between([peak_idx - 0.5, peak_idx + 0.5], [peak_rp, peak_rp], color="grey", alpha=0.3,
+                         label="Peak Location")
         for d in range(0, len(vfa_durs)):
-            plt.fill_between([balanced_idx[d, 1],balanced_idx[d, 2]],[vfa_rp[d],vfa_rp[d]],alpha=0.3,label=f"{vfa_durs[d]} Window")
+            plt.fill_between([balanced_idx[d, 1], balanced_idx[d, 2]], [vfa_rp[d], vfa_rp[d]], alpha=0.3,
+                             label=f"{vfa_durs[d]} Window")
 
-        plt.plot(hydro,color="black",label="0. Raw Hydrograph")
-        plt.plot(output,label=f"1. Peak Scaled")
+        plt.plot(hydro, color="black", label="0. Raw Hydrograph")
+        plt.plot(output, label=f"1. Peak Scaled")
         linestyles = ['--', '-.', ':', '-']
 
     for d in range(0, len(vfa_durs)):
@@ -579,7 +520,7 @@ def balanced_scale(peak_rp,vfa_rp,hydro,balanced_idx,peak_type="peaked",baseflow
 
                 # Apply v_ratio
                 output[0:peak_idx] = np.ceil(v_ratio * output[0:peak_idx])
-                output[peak_idx+1:duration] = np.ceil(v_ratio * output[peak_idx+1:duration])
+                output[peak_idx + 1:duration] = np.ceil(v_ratio * output[peak_idx + 1:duration])
 
             if peak_type == "peaked":
                 # Apply peak and volume scaling to entire hydrograph
@@ -605,19 +546,19 @@ def balanced_scale(peak_rp,vfa_rp,hydro,balanced_idx,peak_type="peaked",baseflow
             Q_d = sum(q_d)
 
             # If all values == q_max, use simple multiplication only
-            if all(q_h==q_max):
-                m = (Q_rp * (N1 + N2) - q_d.sum())/(q_h.sum())
-                
+            if all(q_h == q_max):
+                m = (Q_rp * (N1 + N2) - q_d.sum()) / (q_h.sum())
+
                 output[0:int(balanced_idx[d - 1, 1])] = np.ceil(
                     m * (output[0:int(balanced_idx[d - 1, 1])]))
                 output[int(balanced_idx[d - 1, 2]) + 1:duration] = np.ceil(
                     m * (output[int(balanced_idx[d - 1, 2]) + 1:duration]))
-            
+
             # Else, do usual linear factor multiplication
             else:
                 # Calculate scaling factor (m)
                 m = (Q_rp * (N1 + N2) - q_max * N2 - Q_d) / sum(q_max - q_h)
-                
+
                 # Next, apply equation to modify Q values
                 output[0:int(balanced_idx[d - 1, 1])] = np.ceil(
                     m * (q_max - output[0:int(balanced_idx[d - 1, 1])]) + q_max)
@@ -631,7 +572,7 @@ def balanced_scale(peak_rp,vfa_rp,hydro,balanced_idx,peak_type="peaked",baseflow
 
         if plot_construct:
             itr += 1
-            plt.plot(output, linestyle=linestyles[d],label=f"{itr}. {int(balanced_idx[d, 0])} Scaled")
+            plt.plot(output, linestyle=linestyles[d], label=f"{itr}. {int(balanced_idx[d, 0])} Scaled")
 
         # Fix negative flows
         if (any(output < 1)) or (pd.isna(output).any()):
@@ -640,11 +581,14 @@ def balanced_scale(peak_rp,vfa_rp,hydro,balanced_idx,peak_type="peaked",baseflow
 
             if plot_construct:
                 itr += 1
-                plt.plot(output, linestyle=linestyles[d],label=f"{itr}. {int(balanced_idx[d, 0])} Scaled (Correction)")
+                plt.plot(output, linestyle=linestyles[d], label=f"{itr}. {int(balanced_idx[d, 0])} Scaled (Correction)")
 
         # Finally, check volume
-        if abs(check_error(np.mean(output[int(balanced_idx[d, 1]):int(balanced_idx[d, 2])]),vfa_rp[d])) > 0.0001:  # greater than 0.0001 or 0.01% in CFS
-            print("Volumes do not agree: ", np.round(abs(check_error(np.mean(output[int(balanced_idx[d, 1]):int(balanced_idx[d, 2])]),vfa_rp[d])), 6), " error")
+        if abs(check_error(np.mean(output[int(balanced_idx[d, 1]):int(balanced_idx[d, 2])]),
+                           vfa_rp[d])) > 0.0001:  # greater than 0.0001 or 0.01% in CFS
+            print("Volumes do not agree: ", np.round(
+                abs(check_error(np.mean(output[int(balanced_idx[d, 1]):int(balanced_idx[d, 2])]), vfa_rp[d])), 6),
+                  " error")
         else:
             print("Volume correction successful.")
         # Recheck peaks
@@ -654,14 +598,32 @@ def balanced_scale(peak_rp,vfa_rp,hydro,balanced_idx,peak_type="peaked",baseflow
             print("Peak scaling successful.")
 
     if plot_construct:
-        plt.plot(output, color="black",linewidth=0.5,label=f"F. Final Hydrograph")
+        plt.plot(output, color="black", linewidth=0.5, label=f"F. Final Hydrograph")
         plt.legend()
-        plt.savefig(f"pc/inputpeak_{int(hydro.max())}_scalepeak_{int(peak_rp)}_plot_construct.jpg", bbox_inches='tight', dpi=300)
+        plt.savefig(f"pc/inputpeak_{int(hydro.max())}_scalepeak_{int(peak_rp)}_plot_construct.jpg", bbox_inches='tight',
+                    dpi=300)
         plt.close()
 
     return output
 
-def check_hydrographs(output,ffa,vfa,rps_in,hydro_in):
+
+def calc_hydro(hydro_check, vfa_durs):
+    """
+    This function calculates the average flow for user specified durations
+    :param hydro_check: df, the hydrograph being evaluated
+    :param vfa_durs: list, the durations used for calcs
+    :return: list, average flow for durations
+    """
+    hydro_vals = np.zeros((len(vfa_durs) + 1))
+    # Check peak
+    hydro_vals[0] = round(hydro_check.max(), 0)
+    # Loop through volumes
+    for d in range(0, len(vfa_durs)):
+        hydro_vals[d + 1] = round(hydro_check.rolling(int(vfa_durs[d])).mean().max(), 0)
+
+    return hydro_vals
+
+def check_hydrographs(output, ffa, vfa, rps_in, hydro_in):
     """
     This function checks the peaks and volumes of the hydrograph against the ffa and vfa
 
@@ -675,7 +637,7 @@ def check_hydrographs(output,ffa,vfa,rps_in,hydro_in):
     print("Preparing hydrograph stats")
 
     # Remove extra columns from vfa, identify durations
-    vfa = vfa.iloc[:,2:]
+    vfa = vfa.iloc[:, 2:]
     vfa_durs = [int(i) for i in vfa.columns]
 
     # Calculate stats
@@ -685,16 +647,16 @@ def check_hydrographs(output,ffa,vfa,rps_in,hydro_in):
     for h in range(0, hydro_in.shape[1]):
         for r in range(0, len(rps_in)):
             hydro_check = pd.DataFrame(output[:, r, h])
-            hydro_vals[0, r, h] = round(hydro_check.max(),0)
-            hydro_stats[0, r, h] = np.round(check_error(hydro_vals[0, r, h],ffa[r]), 4)
+            hydro_vals[:, r, h] = calc_hydro(hydro_check, vfa_durs)
+            hydro_stats[0, r, h] = np.round(check_error(hydro_vals[0, r, h], ffa[r]), 4)
 
             for d in range(0, len(vfa_durs)):
-                hydro_vals[d + 1, r, h] = round(hydro_check.rolling(int(vfa_durs[d])).mean().max(),0)
-                hydro_stats[d + 1, r, h] = round(check_error(hydro_vals[d + 1, r, h],vfa.iloc[r, d]), 4)
+                hydro_stats[d + 1, r, h] = round(check_error(hydro_vals[d + 1, r, h], vfa.iloc[r, d]), 4)
 
-    return hydro_vals,hydro_stats
+    return hydro_vals, hydro_stats
 
-def check_pmf(hydro_vals,peak,volumes):
+
+def check_pmf(hydro_vals, peak, volumes):
     """
     This function checks the peaks and volumes of the hydrograph against the ffa and vfa
 
@@ -705,32 +667,33 @@ def check_pmf(hydro_vals,peak,volumes):
     """
     print("Comparing hydrograph values to PMF")
 
-    dd,rr,hh = hydro_vals.shape
-    hydro_pmf = np.empty(hydro_vals.shape,dtype=bool)
+    dd, rr, hh = hydro_vals.shape
+    hydro_pmf = np.empty(hydro_vals.shape, dtype=bool)
 
     for d in range(0, dd):
         if d == 0:
             comparison = peak
         else:
-            comparison = volumes[d-1]
-        for r in range(0,rr):
-            for h in range(0,hh):
-                hydro_pmf[d,r,h] = bool(hydro_vals[d,r,h] >= comparison)
+            comparison = volumes[d - 1]
+        for r in range(0, rr):
+            for h in range(0, hh):
+                hydro_pmf[d, r, h] = bool(hydro_vals[d, r, h] >= comparison)
 
-    hydro_pmf_summary = np.empty((rr,hh),dtype='<U16')
+    hydro_pmf_summary = np.empty((rr, hh), dtype='<U16')
     for r in range(0, rr):
         for h in range(0, hh):
-            if (hydro_pmf[0,r,h]==True):
+            if (hydro_pmf[0, r, h] == True):
                 if (hydro_pmf[1, r, h] == True):
-                    hydro_pmf_summary[r,h] = "Peak & Volume"
+                    hydro_pmf_summary[r, h] = "Peak & Volume"
                 else:
                     hydro_pmf_summary[r, h] = "Peak"
             elif (hydro_pmf[1, r, h] == True):
                 hydro_pmf_summary[r, h] = "Volume"
             else:
-                hydro_pmf_summary[r,h] = "N/A"
+                hydro_pmf_summary[r, h] = "N/A"
 
     return hydro_pmf_summary
+
 
 def init_hydrograph_plot(duration):
     """
@@ -742,9 +705,10 @@ def init_hydrograph_plot(duration):
     fig, ax = plt.subplots(figsize=(6.25, 4))
     plt.ylabel('Flow ($ft^3$/s)')
     plt.xlabel('Time (hour)')
-    plt.xlim(0,duration)
+    plt.xlim(0, duration)
     ax.grid()
     ax.yaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('{x:,.0f}'))
+
 
 def init_freq_plot():
     """
@@ -757,73 +721,37 @@ def init_freq_plot():
     plt.xlabel('AEP (%)')
     plt.yscale('log')
     ax.set_xscale('prob')
-    plt.xlim(0.001,1)
+    plt.xlim(0.001, 1)
     plt.gca().invert_xaxis()
     ax.grid()
     ax.grid(which='minor', linestyle=':', linewidth='0.1', color='black')
     ax.yaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('{x:,.0f}'))
 
-def get_linestyles(n,m=0):
-    
-    baselines = ['-', '--', '-.', ':']*10
-    basecolors = ['#e41a1c','#377eb8','#4daf4a','#984ea3','#ff7f00']*8 # https://colorbrewer2.org/?type=qualitative&scheme=Set1&n=9
-    
+
+def get_linestyles(n, m=0):
+    """
+    This function provides line styles for n x m lines being plotted
+
+    :param n:
+    :param m:
+    :return:
+    """
+    baselines = ['-', '--', '-.', ':'] * 10
+    basecolors = ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3',
+                  '#ff7f00'] * 8  # https://colorbrewer2.org/?type=qualitative&scheme=Set1&n=9
+
     linestyles = list()
     linecolors = list()
-    
-    if m==0:
-        for nn in range(0,n):
+
+    if m == 0:
+        for nn in range(0, n):
             linestyles.append(baselines[nn])
             linecolors.append(basecolors[nn])
-            
-    else:
-        for nn in range(0,n):
-            linecolors.append(basecolors[nn])
-        for mm in range(0,m):
-            linestyles.append(baselines[mm])
-        
-    return linecolors,linestyles
-    
-### ARCHIVE ###
-# Alternative for handling longest duration in terms of x (instead of y)
-# Handle longest (critical) duration to ensure smooth start and finish
-# else:
-# # Handle longest duration volume using just the last segment
-# N1 = int(balanced_idx[d - 1, 2])
-# N2 = duration - N1
-# q_d = output[0:int(balanced_idx[d - 1, 2])]
-# Q_d = q_d.mean()
-# q_h = output[int(balanced_idx[d - 1, 2]) + 1:duration]
-# x_h = np.array(range(int(balanced_idx[d - 1, 2]) + 1, duration))
-# x_max = 0
-# q_max = q_h[x_max]
-#
-# m = (Q_rp * (N1 + N2) - q_max * N2 - q_d.sum()) / sum((x_h - x_max) * q_h)
-# # Apply equation to modify Q values
-# output[int(balanced_idx[d - 1, 2]) + 1:duration] = np.ceil(
-#     m * (x_h - x_max) * q_h + q_max)
-#
-# # Use smooth transition from time 0 to start of next shorter duration
-# if baseflow == False:
-#     print("Baseflow transition must be applied for balanced method.")
-# output = adj_baseflow(output, hydro, vol_method=0)
 
-# Handle longest (critical) duration to ensure smooth start and finish
-# else:
-# # Handle longest duration volume using just the last segment
-# N1 = int(balanced_idx[d - 1, 2])
-# N2 = duration - N1
-# q_d = output[0:int(balanced_idx[d - 1, 2])]
-# Q_d = q_d.mean()
-# q_h = output[int(balanced_idx[d - 1, 2]) + 1:duration]
-# q_max = q_h[0]  # .max()
-#
-# m = (Q_rp * (N1 + N2) - q_max * N2 - q_d.sum()) / sum(q_max - q_h)
-# # Apply equation to modify Q values
-# output[int(balanced_idx[d - 1, 2]) + 1:duration] = np.ceil(
-#     m * (q_max - output[int(balanced_idx[d - 1, 2]) + 1:duration]) + q_max)
-#
-# # Use smooth transition from time 0 to start of next shorter duration
-# if baseflow == False:
-#     print("Baseflow transition must be applied for balanced method.")
-# output = adj_baseflow(output, hydro, vol_method=0)
+    else:
+        for nn in range(0, n):
+            linecolors.append(basecolors[nn])
+        for mm in range(0, m):
+            linestyles.append(baselines[mm])
+
+    return linecolors, linestyles

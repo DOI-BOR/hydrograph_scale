@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Created on Fri Nov 19, 2021
-Hydrograph Prep (v1
-@author: tclarkin (USBR 2021)
+Hydrograph Scaling Script, Hydrograph Prep  (v1)
+@author: USBR (tclarkin 2021)
 
-...
+This script cycles through a user specified NWIS gage, identifies a specified number of largest 1-day events, then
+extracts 1-hour flows for use in hydrgrograph scaling.
 
 """
 ### Import Libraries ###
@@ -17,13 +17,13 @@ from functions import nwis_import,analyze_voldur,init_hydrograph_plot
 
 ### Begin User Input ###
 # Set Working Directory
-os.chdir("C://Users//tclarkin//Documents//Projects//Anderson_Ranch_Dam//hydrographs")
-site = "ard"
+os.chdir("C://Users//tclarkin//Documents//Resources//Complete_scripts//hydrograph_scale")
+site = "test"
 site_source = "13186000"
 
 # Hydrograph Settings
-duration = 120  # int, days
-count = 20       # int, number of hydrographs to extract
+duration = 7  # int, days
+count = 5       # int, number of hydrographs to extract
 sel_wy = None # list or None
 
 ### Begin Script ###
@@ -94,5 +94,5 @@ for wy in top_evs.index:
 # Save figure and files
 plt.legend()
 plt.savefig(f"hydro_prep/{site}_input_hydrographs.jpg", bbox_inches='tight', dpi=300)
-hydro.to_csv(f"hydro_prep/{site}_input_hydrographs.csv")
+hydro.to_csv(f"hydro_prep/{site}_input_hydrographs.csv",index=False)
 top_evs.to_csv(f"hydro_prep/{site}_input_hydrographs_summary.csv")
