@@ -51,11 +51,11 @@ os.chdir("C://Users//tclarkin//Documents//Resources//Complete_scripts//hydrograp
 site = "test"
 
 # Load FFA Curve (should have same return periods as vfa)
-ffile = 'ffa.csv'
+ffile = 'input/ffa.csv'
 ffa_col = "median"
 
 # Load VFA Curve (should have same return periods as ffa)
-vfile = 'vfa.csv'
+vfile = 'input/vfa.csv'
 vfa_col = "168"  # specify the column(s), columns names should be durations in hours (1, 2, etc.), used for volume scaling
 
 # Hydrograph duration
