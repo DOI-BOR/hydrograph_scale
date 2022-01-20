@@ -56,26 +56,26 @@ ffa_col = "median"
 
 # Load VFA Curve (should have same return periods as ffa)
 vfile = 'input/vfa.csv'
-vfa_col = "168"  # specify the column(s), columns names should be durations in hours (1, 2, etc.), used for volume scaling
+vfa_col = "2880"  # specify the column(s), columns names should be durations in hours (1, 2, etc.), used for volume scaling
 
 # Hydrograph duration
-duration = 7  # days
+duration = 120  # days
 
 # Load Hydrograph(s)
 hfile = 'hydro_prep/test_input_hydrographs.csv'
 hydro_sel = "all"  # List of which hydrographs to scale (column name) or "all"
 
 # Select Methods
-scaleby = "balanced"  # "peaks&volumes", "peaks", "volumes" or "balanced"
+scaleby = "peaks&volumes"  # "peaks&volumes", "peaks", "volumes" or "balanced"
 rp_sel = "all"  # Which RPs to produce hydrographs for, must correspond to RPs in ffile vfile or "all"
 baseflow = False  # True to include transition from baseflow to scaled hydrograph
 plotmin = 10
 plotmax = 30000
 
 # Additional settings for Balanced
-plot_construct = True  # True to plot evolution of balanced hydrographs.
-peak_type = "peaked"  # "peaked" or "spiked"
-balanced_cols = ["48", "168"]  # columns to be used for balance hydrographs
+plot_construct = False  # True to plot evolution of balanced hydrographs.
+peak_type = "spiked"  # "peaked" or "spiked"
+balanced_cols = ["720", "2880"]  # columns to be used for balance hydrographs
 
 # check against PMF (if None, no calculation will be completed)
 pmf_peak = None  # int

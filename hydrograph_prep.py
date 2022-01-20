@@ -22,7 +22,7 @@ site = "test"
 site_source = "13186000"
 
 # Hydrograph Settings
-duration = 7  # int, days
+duration = 120  # int, days
 count = 5       # int, number of hydrographs to extract
 sel_wy = None # list or None
 
