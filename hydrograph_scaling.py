@@ -14,7 +14,9 @@ The Peaks & Volumes method:
     Negative flows are set to 1. If volumes are not within 0.0001 (or 0.01%) of the FFA/VFA value, an error is posted.
 The Balanced method:
     Uses same method as Peaks & Volumes, but with incremental windows for each duration.
-    
+The Beard method:
+    Uses the method for balanced scaled hydrograph developed by Leo Beard.
+
 This script requires:
     ffile = flood frequency curve as .csv, with aep in percent (column 0), return period (column 1), median (column 2), lower (column 3), upper (column 4).
         Should include header: ["aep_pct","rp","median","lower","upper"].
@@ -42,12 +44,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from functions import hydroclip, importfreq
 from functions import peak_scale, vol_scale, pav_scale
-from functions import get_balanced_indices, balanced_scale
+from functions import get_balanced_indices, balanced_scale, beard_balanced_scale
 from functions import calc_hydro, check_hydrographs, check_pmf, init_freq_plot, init_hydrograph_plot, get_linestyles
 
 ### Begin User Input ###
 # Set Working Directory
-os.chdir("C://Users//tclarkin//Documents//Resources//Complete_scripts//hydrograph_scale")
+os.chdir("C://Users//tclarkin//GitHub//hydrograph_scale")
 site = "test"
 
 # Load FFA Curve (should have same return periods as vfa)
@@ -66,16 +68,16 @@ hfile = 'example/test_input_hydrographs.csv'
 hydro_sel = "all"  # List of which hydrographs to scale (column name) or "all"
 
 # Select Methods
-scaleby = "peaks&volumes"  # "peaks&volumes", "peaks", "volumes" or "balanced"
+scaleby = "beard"  # "peaks&volumes", "peaks", "volumes", "balanced", or "beard"
 rp_sel = "all"  # Which RPs to produce hydrographs for, must correspond to RPs in ffile vfile or "all"
 baseflow = False  # True to include transition from baseflow to scaled hydrograph
 plotmin = 10
 plotmax = 30000
 
 # Additional settings for Balanced
-plot_construct = False  # True to plot evolution of balanced hydrographs.
-peak_type = "spiked"  # "peaked" or "spiked"
-balanced_cols = ["720", "2880"]  # columns to be used for balance hydrographs
+plot_construct = True  # True to plot evolution of balanced hydrographs.
+peak_type = "spiked"  # "peaked" or "spiked" ONLY applicable to "balanced"
+balanced_cols = ["48", "168"]  # columns to be used for balance hydrographs
 
 # check against PMF (if None, no calculation will be completed)
 pmf_peak = None  # int
@@ -124,8 +126,9 @@ plt.legend()
 plt.savefig(f'{hfile.split(".")[0]}.jpg', bbox_inches='tight', dpi=300)
 
 # Check that user has input a valid method
-if (scaleby != "peaks" and scaleby != "volumes" and scaleby != "peaks&volumes" and scaleby != "balanced") == True:
-    sys.exit("Please select scaling method: \"peaks\", \"volumes\", \"peaks&volumes\" or \"balanced\"")
+if (
+        scaleby != "peaks" and scaleby != "volumes" and scaleby != "peaks&volumes" and scaleby != "balanced" and scaleby != "beard") == True:
+    sys.exit("Please select scaling method: \"peaks\", \"volumes\", \"peaks&volumes\", \"balanced\" or \"beard\"")
 else:
     print("Scaling hydrographs by " + scaleby)
 
@@ -138,7 +141,7 @@ for h in range(0, hydro_in.shape[1]):
     print("Beginning hydrograph " + hydro_sel[h])
     hydro = hydro_in[:, h]
 
-    if scaleby == "balanced":
+    if scaleby == "balanced" or scaleby == "beard":
         vfa_durs = [int(i) for i in balanced_cols]  # get duratinos from selected column names
         balanced_idx = get_balanced_indices(vfa_durs, hydro)
 
@@ -175,6 +178,11 @@ for h in range(0, hydro_in.shape[1]):
             peak_rp = ffa.loc[r, ffa_col]
             vfa_rp = vfa.loc[r, balanced_cols]
             output[:, r, h] = balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, peak_type, baseflow, plot_construct)
+
+        if scaleby == "beard":
+            peak_rp = ffa.loc[r, ffa_col]
+            vfa_rp = vfa.loc[r, balanced_cols]
+            output[:, r, h] = beard_balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, plot_construct)
 
     print(f"Scaling of Hydrograph {hydro_sel[h]} complete.")
 

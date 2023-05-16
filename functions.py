@@ -607,6 +607,113 @@ def balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, peak_type="peaked", bas
     return output
 
 
+def beard_balanced_scale(peak_rp,vfa_rp,hydro,balanced_idx,plot_construct=False):
+    """
+    The concept of balanced is similar to peak and volume scaling is simple, except instead of reserving only the peak,
+    we reserve successively larger windows for the shorter durations
+
+    :param peak_rp: float, the desired peak
+    :param vfa_rp: 1D array, volumes for each duration
+    :param hydro: 1D array, the input hydrograph
+    :param balanced_idx: 2D array, durations, beginning and ending indices
+    :param plot_construct: boolean, show plots of balanced hydrograph construction
+    :return: 1D array, the scaled hydrograph
+    """
+    if plot_construct:
+        # Check for plot construct directory
+        if not os.path.isdir("pc"):
+            os.mkdir("pc")
+        itr = 1
+
+    vfa_durs = balanced_idx[:, 0]
+
+    # First, scale the peak
+    peak_idx = hydro.argmax()
+    N = duration = len(hydro)
+
+    # Scale to peak
+    output = peak_scale(peak_rp, hydro)
+    output[0:peak_idx] = hydro[0:peak_idx] # return rest of hydrograph to original
+    output[peak_idx + 1:duration] = hydro[peak_idx + 1:duration]
+
+    # If plot_construct is true, plot construction of balanced hydrograph
+    if plot_construct:
+        fig, ax = plt.subplots(figsize=(6.25, 4))
+        plt.ylabel('Flow ($ft^3$/s)')
+        plt.xlabel('Time (hour)')
+        plt.xlim(0, duration)
+        ax.grid()
+
+        # Plot locations
+        plt.fill_between([peak_idx - 0.5, peak_idx + 0.5], [peak_rp, peak_rp], color="grey", alpha=0.3,
+                         label="Peak Location")
+        for d in range(0, len(vfa_durs)):
+            plt.fill_between([balanced_idx[d, 1], balanced_idx[d, 2]], [vfa_rp[d], vfa_rp[d]], alpha=0.3,
+                             label=f"{vfa_durs[d]} Window")
+
+        plt.plot(hydro, color="black", label="0. Raw Hydrograph")
+        plt.plot(output, label=f"1. Peak Scaled")
+        linestyles = ['--', '-.', ':', '-']
+
+    for d in range(0, len(vfa_durs)):
+        print(f"Scaling to {vfa_durs[d]} timestep curve")
+        Q_rp = vfa_rp[d]
+
+        # Handle the next duration below peak, simple scaling by volumes (excluding peak)
+        if d == 0:
+            prev_start = int(peak_idx)
+            prev_end = int(peak_idx) + 1
+        # Handle longer durations
+        else:
+            prev_start = int(balanced_idx[d-1,1])
+            prev_end = int(balanced_idx[d-1,2])
+
+        # Define durations
+        N1 = balanced_idx[d - 1, 0]
+        N2 = balanced_idx[d, 0] - N1
+        # Define portion of hydrograph BEING scaled
+        q_h = np.concatenate((output[int(balanced_idx[d, 1]):prev_start],
+                              output[prev_end:int(balanced_idx[d, 2])]))
+
+        # Define portion of hydrograph NOT being scaled
+        q_d = output[prev_start:prev_end]
+
+        # Calculate scaling factor
+        m = (Q_rp * (N1 + N2) - q_d.sum()) / (q_h.sum())
+
+        output[int(balanced_idx[d, 1]):prev_start] = np.ceil(
+            m * (output[int(balanced_idx[d, 1]):prev_start]))
+        output[prev_end:int(balanced_idx[d, 2])] = np.ceil(
+            m * (output[prev_end:int(balanced_idx[d, 2])]))
+
+    if plot_construct:
+        itr += 1
+        plt.plot(output, linestyle=linestyles[d], label=f"{itr}. {int(balanced_idx[d, 0])} Scaled")
+
+
+    # Finally, check volume
+    if abs(check_error(np.mean(output[int(balanced_idx[d, 1]):int(balanced_idx[d, 2])]),
+                       vfa_rp[d])) > 0.0001:  # greater than 0.0001 or 0.01% in CFS
+        print("Volumes do not agree: ", np.round(
+            abs(check_error(np.mean(output[int(balanced_idx[d, 1]):int(balanced_idx[d, 2])]), vfa_rp[d])), 6),
+              " error")
+    else:
+        print("Volume correction successful.")
+    # Recheck peaks
+    if abs(check_error(output.max(), peak_rp)) > 0.0001:  # greater than 0.0001 or 0.01%
+        print(f"Peaks do not agree: {round(abs(check_error(output.max(), peak_rp)), 6)} error")
+    else:
+        print("Peak scaling successful.")
+
+    if plot_construct:
+        plt.plot(output, color="black", linewidth=0.5, label=f"F. Final Hydrograph")
+        plt.legend()
+        plt.savefig(f"pc/inputpeak_{int(hydro.max())}_scalepeak_{int(peak_rp)}_plot_construct.jpg", bbox_inches='tight',
+                    dpi=300)
+        plt.close()
+
+    return output
+
 def calc_hydro(hydro_check, vfa_durs):
     """
     This function calculates the average flow for user specified durations
