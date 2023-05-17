@@ -427,7 +427,6 @@ def pav_scale(peak_rp, Q_rp, hydro, baseflow=False, partial=False):
         print("Peak scaling successful.")
     return output
 
-
 def get_balanced_indices(vfa_durs, hydro):
     """
     This function identifies the beginning and end of the volume frequency windows
@@ -441,9 +440,22 @@ def get_balanced_indices(vfa_durs, hydro):
 
     # Define periods for balanced scaling
     hydro = pd.DataFrame(hydro)
+    peak_idx = hydro.idxmax().item()
+
     for d in range(0, len(vfa_durs)):
         print(f"Defining window for {vfa_durs[d]} hour duration")
-        vol_dur = hydro.rolling(vfa_durs[d]).mean()
+        if peak_idx-vfa_durs[d]<0:
+            start = 0
+            end = 2*vfa_durs[d]
+        elif peak_idx+vfa_durs[d]>len(hydro):
+            start = len(hydro)-2*vfa_durs[d]
+            end = len(hydro)
+        else:
+            start = peak_idx-vfa_durs[d]
+            end = peak_idx+vfa_durs[d]
+
+        hydro_window = hydro.iloc[start:end,0]
+        vol_dur = hydro_window.rolling(vfa_durs[d]).mean()
         vol_dur_end = int(vol_dur.idxmax() + 1)
         vol_dur_beg = int(vol_dur_end - int(vfa_durs[d]))
         print("Begins at timestep", vol_dur_beg)
@@ -451,7 +463,6 @@ def get_balanced_indices(vfa_durs, hydro):
         vfa_tab[d, :] = [int(vfa_durs[d]), int(vol_dur_beg), int(vol_dur_end)]
 
     return vfa_tab
-
 
 def balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, peak_type="peaked", baseflow=True, plot_construct=False):
     """
