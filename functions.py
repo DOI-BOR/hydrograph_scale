@@ -427,6 +427,103 @@ def pav_scale(peak_rp, Q_rp, hydro, baseflow=False, partial=False):
         print("Peak scaling successful.")
     return output
 
+
+def peakonly_scale(peak_rp,hydro):
+    """
+    The concept of peak and volume scaling is scaling the hydrograph to the peak, then correct the rest of the
+    hydrograph ordinates to have the correct volume.
+
+    :param peak_rp: float, the desired peak
+    :param hydro: 1D array, the input hydrograph
+    :return: 1D array, the scaled hydrograph
+    """
+    # First, select the hydrograph
+    output = hydro.copy()
+
+    # Second, invert equation used in pav_scale
+    q_max_idx = output.argmax()
+    q_max = output[q_max_idx]
+    q_min1 = output[:q_max_idx].min()
+    q_min2 = output[q_max_idx:].min()
+
+    m1 = (peak_rp-q_min1)/(q_max-q_min1)
+    m2 = (peak_rp-q_min2)/(q_max-q_min2)
+
+    output[:q_max_idx] = np.ceil(m1*(output[:q_max_idx]-q_min1)+q_min1)
+    output[q_max_idx:] = np.ceil(m2*(output[q_max_idx:]-q_min2)+q_min2)
+
+    # Check if peak is correct
+
+    if abs(check_error(output.max(), peak_rp)) > 0.0001:  # greater than 0.0001 or 0.01%
+        print(f"Peaks do not agree: {round(abs(check_error(output.max(), peak_rp)), 6)} error")
+    else:
+        print("Peak scaling successful.")
+    return output
+
+def volumeonly_scale(Q_rp,hydro):
+    """
+    The concept of peak and volume scaling is scaling the hydrograph to the peak, then correct the rest of the
+    hydrograph ordinates to have the correct volume.
+
+    :param peak_rp: float, the desired peak
+    :param hydro: 1D array, the input hydrograph
+    :return: 1D array, the scaled hydrograph
+    """
+    # First, select the hydrograph
+    output = hydro.copy()
+
+    # Second, invert equation used in pav_scale
+    q_max_idx = output.argmax()
+    q_max = output[q_max_idx]
+    q_min = output.min()
+    N = len(output)
+
+    b = (N*(Q_rp-q_min)*(q_max-q_min)-sum((output-q_min)**2))/sum((output-q_min)*(q_max-q_min)-(output-q_min)**2)
+    print(b)
+    a = (1-b)/(q_max-q_min)
+    print(a)
+
+    output = np.ceil(a*(output-q_min)**2+b*(output-q_min)+q_min)
+
+    # Check if volume is correct
+    if abs(check_error(output.mean(), Q_rp)) > 0.0001:  # greater than 0.0001 or 0.01%
+        print(f"Volumes do not agree: {round(abs(check_error(output.max(), Q_rp)), 6)} error")
+    else:
+        print("Volume scaling successful.")
+    return output
+
+def modified_pav_scale(peak_rp, Q_rp, hydro):
+    """
+    The concept of peak and volume scaling is scaling the hydrograph to the peak, then correct the rest of the
+    hydrograph ordinates to have the correct volume.
+
+    :param peak_rp: float, the desired peak
+    :param Q_rp: float, the desired volume (average flow)
+    :param hydro: 1D array, the input hydrograph
+    :return: 1D array, the scaled hydrograph
+    """
+    # First, scale by peak
+    output = peakonly_scale(peak_rp, hydro)
+
+    # Second, use equation 5 to scale volume
+    output = volumeonly_scale(Q_rp,output)
+
+    # Fix negative flows
+    if (any(output < 1)) or (pd.isna(output).any()):
+        output[output < 1] = 1
+        output[output == np.nan] = 1
+
+    # Fourth, check if peak and volume are correct
+    if abs(check_error(output.mean(), Q_rp)) > 0.0001:  # greater than 0.0001 or 0.01% in CFS
+        print(f"Volumes do not agree: {round(abs(check_error(output.mean(), Q_rp)), 6)} error")
+    else:
+        print("Volume scaling successful.")
+    if abs(check_error(output.max(), peak_rp)) > 0.0001:  # greater than 0.0001 or 0.01%
+        print(f"Peaks do not agree: {round(abs(check_error(output.max(), peak_rp)), 6)} error")
+    else:
+        print("Peak scaling successful.")
+    return output
+
 def get_balanced_indices(vfa_durs, hydro):
     """
     This function identifies the beginning and end of the volume frequency windows
@@ -440,22 +537,9 @@ def get_balanced_indices(vfa_durs, hydro):
 
     # Define periods for balanced scaling
     hydro = pd.DataFrame(hydro)
-    peak_idx = hydro.idxmax().item()
-
     for d in range(0, len(vfa_durs)):
         print(f"Defining window for {vfa_durs[d]} hour duration")
-        if peak_idx-vfa_durs[d]<0:
-            start = 0
-            end = 2*vfa_durs[d]
-        elif peak_idx+vfa_durs[d]>len(hydro):
-            start = len(hydro)-2*vfa_durs[d]
-            end = len(hydro)
-        else:
-            start = peak_idx-vfa_durs[d]
-            end = peak_idx+vfa_durs[d]
-
-        hydro_window = hydro.iloc[start:end,0]
-        vol_dur = hydro_window.rolling(vfa_durs[d]).mean()
+        vol_dur = hydro.rolling(vfa_durs[d]).mean()
         vol_dur_end = int(vol_dur.idxmax() + 1)
         vol_dur_beg = int(vol_dur_end - int(vfa_durs[d]))
         print("Begins at timestep", vol_dur_beg)
@@ -464,7 +548,8 @@ def get_balanced_indices(vfa_durs, hydro):
 
     return vfa_tab
 
-def balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, peak_type="peaked", baseflow=True, plot_construct=False):
+
+def balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, type="peaked", baseflow=True, plot_construct=False):
     """
     The concept of balanced is similar to peak and volume scaling is simple, except instead of reserving only the peak,
     we reserve successively larger windows for the shorter durations
@@ -473,7 +558,7 @@ def balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, peak_type="peaked", bas
     :param vfa_rp: 1D array, volumes for each duration
     :param hydro: 1D array, the input hydrograph
     :param balanced_idx: 2D array, durations, beginning and ending indices
-    :param peak_type: str, "peaked" or "spiked"
+    :param type: str, "peaked" or "spiked"
     :param baseflow: boolean, option to smooth beginning and end of hydrographs for baseflow transition
     :param plot_construct: boolean, show plots of balanced hydrograph construction
     :return: 1D array, the scaled hydrograph
@@ -491,8 +576,8 @@ def balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, peak_type="peaked", bas
     N = duration = len(hydro)
     # Scale to peak
     output = peak_scale(peak_rp, hydro)
-    # If peak_type is spiked, only adjust peak hour
-    if peak_type == "spiked":
+    # If type is spiked, only adjust peak hour, adjust back remaining ordinates
+    if type == "spiked" or type=="beard":
         output[0:peak_idx] = hydro[0:peak_idx]
         output[peak_idx + 1:duration] = hydro[peak_idx + 1:duration]
 
@@ -522,18 +607,23 @@ def balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, peak_type="peaked", bas
         # Handle the next duration below peak, simple scaling by volumes (excluding peak)
         if d == 0:
             N = balanced_idx[d, 0]
-            if peak_type == "spiked":
+            if type == "spiked" or type=="beard":
                 # Scale volume outside of peak
-                Q_d = output[peak_idx]
+                Q_0 = output[peak_idx]
                 q_h1 = output[int(balanced_idx[d, 1]):peak_idx]
                 q_h2 = output[peak_idx + 1:int(balanced_idx[d, 2])]
-                v_ratio = (Q_rp * N - Q_d) / (sum(q_h1) + sum(q_h2))
+                Q_h = sum(q_h1) + sum(q_h2)
+                v_ratio = (Q_rp * N - Q_0) / Q_h
 
                 # Apply v_ratio
-                output[0:peak_idx] = np.ceil(v_ratio * output[0:peak_idx])
-                output[peak_idx + 1:duration] = np.ceil(v_ratio * output[peak_idx + 1:duration])
+                if type =="spiked":
+                    output[0:peak_idx] = np.ceil(v_ratio * output[0:peak_idx])
+                    output[peak_idx + 1:duration] = np.ceil(v_ratio * output[peak_idx + 1:duration])
+                if type =="beard":
+                    output[int(balanced_idx[d,1]):peak_idx] = np.ceil(v_ratio * output[int(balanced_idx[d, 1]):peak_idx])
+                    output[peak_idx+1:int(balanced_idx[d,2])] = np.ceil(v_ratio * output[peak_idx+1:int(balanced_idx[d, 2])])
 
-            if peak_type == "peaked":
+            if type == "peaked":
                 # Apply peak and volume scaling to entire hydrograph
                 q_max = output.max()
                 q_h = output[int(balanced_idx[d, 1]):int(balanced_idx[d, 2])]
@@ -548,27 +638,27 @@ def balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, peak_type="peaked", bas
             N1 = balanced_idx[d - 1, 0]
             N2 = balanced_idx[d, 0] - N1
             # Define portion of hydrograph BEING scaled
-            q_h = np.concatenate((output[int(balanced_idx[d, 1]):int(balanced_idx[d - 1, 1]) - 1],
-                                  output[int(balanced_idx[d - 1, 2]) + 1:int(balanced_idx[d, 2])]))
+            q_h = np.concatenate((output[int(balanced_idx[d,1]):int(balanced_idx[d-1, 1])],
+                                  output[int(balanced_idx[d-1, 2]):int(balanced_idx[d, 2])]))
 
             # Define portion of hydrograph NOT being scaled
-            q_d = output[int(balanced_idx[d - 1, 1]):int(balanced_idx[d - 1, 2])]
-            q_max = np.min(q_d)
-            Q_d = sum(q_d)
+            q_0 = output[int(balanced_idx[d-1, 1]):int(balanced_idx[d-1, 2])]
+            q_max = np.min(q_0)
+            Q_0 = sum(q_0)
 
-            # If all values == q_max, use simple multiplication only
-            if all(q_h == q_max):
-                m = (Q_rp * (N1 + N2) - q_d.sum()) / (q_h.sum())
+            # If all values == q_max or type = "beard", use simple multiplication only
+            if all(q_h == q_max) or type=="beard":
+                m = (Q_rp * (N1 + N2) - q_0.sum()) / (q_h.sum())
 
-                output[0:int(balanced_idx[d - 1, 1])] = np.ceil(
-                    m * (output[0:int(balanced_idx[d - 1, 1])]))
-                output[int(balanced_idx[d - 1, 2]) + 1:duration] = np.ceil(
-                    m * (output[int(balanced_idx[d - 1, 2]) + 1:duration]))
+                output[int(balanced_idx[d,1]):int(balanced_idx[d-1,1])] = np.ceil(
+                    m * (output[int(balanced_idx[d,1]):int(balanced_idx[d-1, 1])]))
+                output[int(balanced_idx[d-1,2]):int(balanced_idx[d,2])] = np.ceil(
+                    m * (output[int(balanced_idx[d-1, 2]):int(balanced_idx[d,2])]))
 
             # Else, do usual linear factor multiplication
             else:
                 # Calculate scaling factor (m)
-                m = (Q_rp * (N1 + N2) - q_max * N2 - Q_d) / sum(q_max - q_h)
+                m = (Q_rp * (N1 + N2) - q_max * N2 - Q_0) / sum(q_max - q_h)
 
                 # Next, apply equation to modify Q values
                 output[0:int(balanced_idx[d - 1, 1])] = np.ceil(
@@ -617,113 +707,6 @@ def balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, peak_type="peaked", bas
 
     return output
 
-
-def beard_balanced_scale(peak_rp,vfa_rp,hydro,balanced_idx,plot_construct=False):
-    """
-    The concept of balanced is similar to peak and volume scaling is simple, except instead of reserving only the peak,
-    we reserve successively larger windows for the shorter durations
-
-    :param peak_rp: float, the desired peak
-    :param vfa_rp: 1D array, volumes for each duration
-    :param hydro: 1D array, the input hydrograph
-    :param balanced_idx: 2D array, durations, beginning and ending indices
-    :param plot_construct: boolean, show plots of balanced hydrograph construction
-    :return: 1D array, the scaled hydrograph
-    """
-    if plot_construct:
-        # Check for plot construct directory
-        if not os.path.isdir("pc"):
-            os.mkdir("pc")
-        itr = 1
-
-    vfa_durs = balanced_idx[:, 0]
-
-    # First, scale the peak
-    peak_idx = hydro.argmax()
-    N = duration = len(hydro)
-
-    # Scale to peak
-    output = peak_scale(peak_rp, hydro)
-    output[0:peak_idx] = hydro[0:peak_idx] # return rest of hydrograph to original
-    output[peak_idx + 1:duration] = hydro[peak_idx + 1:duration]
-
-    # If plot_construct is true, plot construction of balanced hydrograph
-    if plot_construct:
-        fig, ax = plt.subplots(figsize=(6.25, 4))
-        plt.ylabel('Flow ($ft^3$/s)')
-        plt.xlabel('Time (hour)')
-        plt.xlim(0, duration)
-        ax.grid()
-
-        # Plot locations
-        plt.fill_between([peak_idx - 0.5, peak_idx + 0.5], [peak_rp, peak_rp], color="grey", alpha=0.3,
-                         label="Peak Location")
-        for d in range(0, len(vfa_durs)):
-            plt.fill_between([balanced_idx[d, 1], balanced_idx[d, 2]], [vfa_rp[d], vfa_rp[d]], alpha=0.3,
-                             label=f"{vfa_durs[d]} Window")
-
-        plt.plot(hydro, color="black", label="0. Raw Hydrograph")
-        plt.plot(output, label=f"1. Peak Scaled")
-        linestyles = ['--', '-.', ':', '-']
-
-    for d in range(0, len(vfa_durs)):
-        print(f"Scaling to {vfa_durs[d]} timestep curve")
-        Q_rp = vfa_rp[d]
-
-        # Handle the next duration below peak, simple scaling by volumes (excluding peak)
-        if d == 0:
-            prev_start = int(peak_idx)
-            prev_end = int(peak_idx) + 1
-        # Handle longer durations
-        else:
-            prev_start = int(balanced_idx[d-1,1])
-            prev_end = int(balanced_idx[d-1,2])
-
-        # Define durations
-        N1 = balanced_idx[d - 1, 0]
-        N2 = balanced_idx[d, 0] - N1
-        # Define portion of hydrograph BEING scaled
-        q_h = np.concatenate((output[int(balanced_idx[d, 1]):prev_start],
-                              output[prev_end:int(balanced_idx[d, 2])]))
-
-        # Define portion of hydrograph NOT being scaled
-        q_d = output[prev_start:prev_end]
-
-        # Calculate scaling factor
-        m = (Q_rp * (N1 + N2) - q_d.sum()) / (q_h.sum())
-
-        output[int(balanced_idx[d, 1]):prev_start] = np.ceil(
-            m * (output[int(balanced_idx[d, 1]):prev_start]))
-        output[prev_end:int(balanced_idx[d, 2])] = np.ceil(
-            m * (output[prev_end:int(balanced_idx[d, 2])]))
-
-    if plot_construct:
-        itr += 1
-        plt.plot(output, linestyle=linestyles[d], label=f"{itr}. {int(balanced_idx[d, 0])} Scaled")
-
-
-    # Finally, check volume
-    if abs(check_error(np.mean(output[int(balanced_idx[d, 1]):int(balanced_idx[d, 2])]),
-                       vfa_rp[d])) > 0.0001:  # greater than 0.0001 or 0.01% in CFS
-        print("Volumes do not agree: ", np.round(
-            abs(check_error(np.mean(output[int(balanced_idx[d, 1]):int(balanced_idx[d, 2])]), vfa_rp[d])), 6),
-              " error")
-    else:
-        print("Volume correction successful.")
-    # Recheck peaks
-    if abs(check_error(output.max(), peak_rp)) > 0.0001:  # greater than 0.0001 or 0.01%
-        print(f"Peaks do not agree: {round(abs(check_error(output.max(), peak_rp)), 6)} error")
-    else:
-        print("Peak scaling successful.")
-
-    if plot_construct:
-        plt.plot(output, color="black", linewidth=0.5, label=f"F. Final Hydrograph")
-        plt.legend()
-        plt.savefig(f"pc/inputpeak_{int(hydro.max())}_scalepeak_{int(peak_rp)}_plot_construct.jpg", bbox_inches='tight',
-                    dpi=300)
-        plt.close()
-
-    return output
 
 def calc_hydro(hydro_check, vfa_durs):
     """
