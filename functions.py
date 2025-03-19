@@ -443,14 +443,17 @@ def peakonly_scale(peak_rp,hydro):
     # Second, invert equation used in pav_scale
     q_max_idx = output.argmax()
     q_max = output[q_max_idx]
-    q_min1 = output[:q_max_idx].min()
-    q_min2 = output[q_max_idx:].min()
+    q_min1 = output[0]
+    q_min2 = output[-1]
 
     m1 = (peak_rp-q_min1)/(q_max-q_min1)
     m2 = (peak_rp-q_min2)/(q_max-q_min2)
 
     output[:q_max_idx] = np.ceil(m1*(output[:q_max_idx]-q_min1)+q_min1)
     output[q_max_idx:] = np.ceil(m2*(output[q_max_idx:]-q_min2)+q_min2)
+
+    # If any values are less than q_min, set to q_min
+    output[output<min(q_min1,q_min2)] = min(q_min1,q_min2)
 
     # Check if peak is correct
 
@@ -479,9 +482,7 @@ def volumeonly_scale(Q_rp,hydro):
     N = len(output)
 
     b = (N*(Q_rp-q_min)*(q_max-q_min)-sum((output-q_min)**2))/sum((output-q_min)*(q_max-q_min)-(output-q_min)**2)
-    print(b)
     a = (1-b)/(q_max-q_min)
-    print(a)
 
     output = np.ceil(a*(output-q_min)**2+b*(output-q_min)+q_min)
 
@@ -502,10 +503,10 @@ def modified_pav_scale(peak_rp, Q_rp, hydro):
     :param hydro: 1D array, the input hydrograph
     :return: 1D array, the scaled hydrograph
     """
-    # First, scale by peak
+    # First, scale peak only
     output = peakonly_scale(peak_rp, hydro)
 
-    # Second, use equation 5 to scale volume
+    # Second, scale volume only
     output = volumeonly_scale(Q_rp,output)
 
     # Fix negative flows
@@ -598,7 +599,7 @@ def balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, type="peaked", baseflow
 
         plt.plot(hydro, color="black", label="0. Raw Hydrograph")
         plt.plot(output, label=f"1. Peak Scaled")
-        linestyles = ['--', '-.', ':', '-']
+        linestyles = ['--', '-.', ':', '-','--', '-.', ':', '-']
 
     for d in range(0, len(vfa_durs)):
         print(f"Scaling to {vfa_durs[d]} timestep curve")

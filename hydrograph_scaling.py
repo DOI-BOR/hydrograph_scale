@@ -14,9 +14,7 @@ The Peaks & Volumes method:
     Negative flows are set to 1. If volumes are not within 0.0001 (or 0.01%) of the FFA/VFA value, an error is posted.
 The Balanced method:
     Uses same method as Peaks & Volumes, but with incremental windows for each duration.
-The Beard method:
-    Uses the method for balanced scaled hydrograph developed by Leo Beard.
-
+    
 This script requires:
     ffile = flood frequency curve as .csv, with aep in percent (column 0), return period (column 1), median (column 2), lower (column 3), upper (column 4).
         Should include header: ["aep_pct","rp","median","lower","upper"].
@@ -31,57 +29,50 @@ The user must:
     - Verify duration (days)
     - Verify timestep (the program may not run with timesteps other than 1 hour)
     - Select a scaling method ("peaks&volumes", "peaks", "volumes" or "balanced")
-        - If "balanced", user will need to specify plot_construct, peak_type, and blanaced_cols
+        - If "balanced", user will need to specify plot_construct,type, and balanced_cols
     - Specify return periods to be output (list or "all")
     - Specify which input hydrographs to scale (list or "all")
 
 """
 ### Import Libraries ###
-import os
 import sys
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from functions import hydroclip, importfreq
-from functions import peak_scale, vol_scale, pav_scale
-from functions import get_balanced_indices, balanced_scale, beard_balanced_scale
-from functions import calc_hydro, check_hydrographs, check_pmf, init_freq_plot, init_hydrograph_plot, get_linestyles
+from functions import *
 
 ### Begin User Input ###
-# Set Working Directory
-os.chdir("C://Users//tclarkin//GitHub//hydrograph_scale")
-site = "test"
+# Set output name
+site = "scoggins"
 
-# Load FFA Curve (should have same return periods as vfa)
-ffile = 'example/ffa.csv'
+# Define FFA Curve (should have same return periods as vfa)
+ffile = 'scoggins_ffa.csv'
 ffa_col = "median"
 
-# Load VFA Curve (should have same return periods as ffa)
-vfile = 'example/vfa.csv'
-vfa_col = "168"  # specify the column(s), columns names should be durations in hours (1, 2, etc.), used for volume scaling
-
-# Hydrograph duration
-duration = 7  # days
+# Define VFA Curve (should have same return periods as ffa)
+vfile = 'scoggins_vfa.csv'
+vfa_col = "360"  # specify the column(s), columns names should be durations in hours (1, 2, etc.), used for volume scaling
 
 # Load Hydrograph(s)
-hfile = 'example/test_input_hydrographs.csv'
+hfile = 'hydro_prep/input_hydrographs.csv'
 hydro_sel = "all"  # List of which hydrographs to scale (column name) or "all"
+duration = 15  # hydrograph duration in days
 
 # Select Methods
-scaleby = "beard"  # "peaks&volumes", "peaks", "volumes", "balanced", or "beard"
-rp_sel = "all"  # Which RPs to produce hydrographs for, must correspond to RPs in ffile vfile or "all"
+scaleby = "modpav"  # "peaks&volumes", "peaks", "volumes", "balanced", "peaksonly", "volumesonly", or "modpav"
+rp_sel = "all"  # "all" or list of RPs for which to produce hydrographs, must correspond to RPs in ffile and vfile
 baseflow = False  # True to include transition from baseflow to scaled hydrograph
 plotmin = 10
 plotmax = 30000
 
-# Additional settings for Balanced
+# Additional settings for balanced hydrographs
 plot_construct = True  # True to plot evolution of balanced hydrographs.
-peak_type = "spiked"  # "peaked" or "spiked" ONLY applicable to "balanced"
-balanced_cols = ["48", "168"]  # columns to be used for balance hydrographs
+type = "peaked"  # "peaked", "spiked", or "beard"
+balanced_cols = ["24", "72","120","168","360"]  # columns to be used for balance hydrographs
 
 # check against PMF (if None, no calculation will be completed)
 pmf_peak = None  # int
-pmf_volumes = None  # list
+pmf_volumes = None  # list, same
 
 ### Begin Script ###
 ## Setup ##
@@ -89,7 +80,9 @@ pmf_volumes = None  # list
 if not os.path.isdir("output"):
     os.mkdir("output")
 
-# Define duration:
+# Define duration
+if isinstance(duration//24,int):
+    print(f"A duration of {duration} is evenly divisible by 24; Check that input duration is in days, NOT hours...")
 duration = int(duration * 24)
 
 # Import Data:
@@ -126,9 +119,9 @@ plt.legend()
 plt.savefig(f'{hfile.split(".")[0]}.jpg', bbox_inches='tight', dpi=300)
 
 # Check that user has input a valid method
-if (
-        scaleby != "peaks" and scaleby != "volumes" and scaleby != "peaks&volumes" and scaleby != "balanced" and scaleby != "beard") == True:
-    sys.exit("Please select scaling method: \"peaks\", \"volumes\", \"peaks&volumes\", \"balanced\" or \"beard\"")
+methods = ["peaks","volumes","peaks&volumes","peaksonly","volumesonly","modpav","balanced"]
+if scaleby not in methods:
+    sys.exit(f"Please select scaling method: {(', '.join(methods))}")
 else:
     print("Scaling hydrographs by " + scaleby)
 
@@ -141,7 +134,7 @@ for h in range(0, hydro_in.shape[1]):
     print("Beginning hydrograph " + hydro_sel[h])
     hydro = hydro_in[:, h]
 
-    if scaleby == "balanced" or scaleby == "beard":
+    if scaleby == "balanced":
         vfa_durs = [int(i) for i in balanced_cols]  # get duratinos from selected column names
         balanced_idx = get_balanced_indices(vfa_durs, hydro)
 
@@ -152,6 +145,10 @@ for h in range(0, hydro_in.shape[1]):
             peak_rp = ffa.loc[r, ffa_col]
             output[:, r, h] = peak_scale(peak_rp, hydro, baseflow)
 
+        if scaleby == "peaksonly":
+            peak_rp = ffa.loc[r, ffa_col]
+            output[:, r, h] = peakonly_scale(peak_rp, hydro)
+
         if scaleby == "volumes":
             if duration != int(vfa_col):
                 print("VFA duration and hydrograph duration different. Conducting partial scaling...")
@@ -161,6 +158,10 @@ for h in range(0, hydro_in.shape[1]):
             else:
                 Q_rp = vfa.loc[r, vfa_col]
                 output[:, r, h] = vol_scale(Q_rp, hydro, baseflow)
+
+        if scaleby == "volumesonly":
+            Q_rp = vfa.loc[r, vfa_col]
+            output[:, r, h] = volumeonly_scale(Q_rp, hydro)
 
         if scaleby == "peaks&volumes":
             if duration != int(vfa_col):
@@ -174,15 +175,18 @@ for h in range(0, hydro_in.shape[1]):
                 Q_rp = vfa.loc[r, vfa_col]
                 output[:, r, h] = pav_scale(peak_rp, Q_rp, hydro, baseflow)
 
+        if scaleby == "modpav":
+            if duration != int(vfa_col):
+                print("VFA duration and hydrograph duration different. Cannot use selected method...")
+            else:
+                peak_rp = ffa.loc[r, ffa_col]
+                Q_rp = vfa.loc[r, vfa_col]
+                output[:, r, h] = modified_pav_scale(peak_rp, Q_rp, hydro)
+
         if scaleby == "balanced":
             peak_rp = ffa.loc[r, ffa_col]
             vfa_rp = vfa.loc[r, balanced_cols]
-            output[:, r, h] = balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, peak_type, baseflow, plot_construct)
-
-        if scaleby == "beard":
-            peak_rp = ffa.loc[r, ffa_col]
-            vfa_rp = vfa.loc[r, balanced_cols]
-            output[:, r, h] = beard_balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, plot_construct)
+            output[:, r, h] = balanced_scale(peak_rp, vfa_rp, hydro, balanced_idx, type, baseflow, plot_construct)
 
     print(f"Scaling of Hydrograph {hydro_sel[h]} complete.")
 
@@ -195,7 +199,7 @@ else:
 
 for h in range(0, hydro_in.shape[1]):
     df = pd.DataFrame(output[:, :, h], columns=rps_in)
-    ofile = f"output/{site}_{hydro_sel[h]}_{scale_str}_scaled.csv"
+    ofile = f"output/{site}_{hydro_sel[h]}_{scale_str}_{f'{type}_' if scaleby=='balanced' else ''}scaled.csv"
     df.to_csv(ofile, index=True)
     print(f"   Hydrographs exported to {ofile}")
 
@@ -206,7 +210,7 @@ if not os.path.isdir("check"):
 # Check values and stats:
 hydro_vals, hydro_stats = check_hydrographs(output, ffa[ffa_col], vfa, rps_in, hydro_in)
 if pmf_peak is not None:
-    pmf_file = f"check/{site}_{scale_str}_PMF_summary.csv"
+    pmf_file = f"check/{site}_{scale_str}_{f'{type}_' if scaleby=='balanced' else ''}PMF_summary.csv"
     hydro_pmf = pd.DataFrame(check_pmf(hydro_vals, pmf_peak, pmf_volumes))
     hydro_pmf.index = list(rps_in)
     hydro_pmf.columns = hydro_sel[0:len(hydro_pmf.columns)]
@@ -216,27 +220,27 @@ if pmf_peak is not None:
 
 # By hydrograph, checking peaks and all durations in raw vfa
 for h in range(0, hydro_in.shape[1]):
-    val_file = f"check/{site}_{hydro_sel[h]}_{scale_str}_summary_values.csv"
+    val_file = f"check/{site}_{hydro_sel[h]}_{scale_str}_{f'{type}_' if scaleby=='balanced' else ''}summary_values.csv"
     output_vals = pd.DataFrame(hydro_vals[:, :, h])
     output_vals.index = all_durs
     output_vals.columns = list(rps_in)
     output_vals.to_csv(val_file)
 
-    stat_file = f"check/{site}_{hydro_sel[h]}_{scale_str}_summary_stats.csv"
+    stat_file = f"check/{site}_{hydro_sel[h]}_{scale_str}_{f'{type}_' if scaleby=='balanced' else ''}summary_stats.csv"
     output_stats = pd.DataFrame(hydro_stats[:, :, h])
     output_stats.index = all_durs
     output_stats.columns = list(rps_in)
     output_stats.to_csv(stat_file)
 
-# By peaks an durations, including all hydrographs
+# By peaks and durations, including all hydrographs
 for d in range(0, len(all_durs)):
-    durval_file = f"check/{site}_{scale_str}_{all_durs[d]}_values.csv"
+    durval_file = f"check/{site}_{scale_str}_{all_durs[d]}_{f'{type}_' if scaleby=='balanced' else ''}values.csv"
     durval_dat = pd.DataFrame(hydro_vals[d, :, :])
     durval_dat.index = list(rps_in)
     durval_dat.columns = list(hydro_sel[0:len(durval_dat.columns)])
     durval_dat.to_csv(durval_file)
 
-    durstat_file = f"check/{site}_{scale_str}_{all_durs[d]}_stats.csv"
+    durstat_file = f"check/{site}_{scale_str}_{all_durs[d]}_{f'{type}_' if scaleby=='balanced' else ''}stats.csv"
     durstat_dat = pd.DataFrame(hydro_stats[d, :, :])
     durstat_dat.index = list(rps_in)
     durstat_dat.columns = list(hydro_sel[0:len(durstat_dat.columns)])
@@ -271,7 +275,7 @@ for h in range(0, hydro_in.shape[1]):
     plt.legend(title="Return Period (yr).", bbox_to_anchor=(1, 0.5), loc='center left', prop={'size': 10})
 
     # Save figure
-    hfig_file = f"plots/{site}_{hydro_sel[h]}_{scale_str}_scaled.jpg"
+    hfig_file = f"plots/{site}_{hydro_sel[h]}_{scale_str}_{f'{type}_' if scaleby=='balanced' else ''}scaled.jpg"
     plt.savefig(hfig_file, bbox_inches='tight', dpi=300)
 
 ## Plot all of the hydrographs together
@@ -307,13 +311,13 @@ ax.set_position([box.x0, box.y0, box.width * 0.9, box.height])
 plt.legend(title="Hydrographs Shapes", bbox_to_anchor=(1, 0.5), loc='center left', prop={'size': 10})
 
 # Save figure
-xfile = f"plots/{site}_all_{scale_str}_scaled.jpg"
+xfile = f"plots/{site}_all_{scale_str}_{f'{type}_' if scaleby=='balanced' else ''}scaled.jpg"
 plt.savefig(xfile, bbox_inches='tight', dpi=300)
 
 ## Plot against curves
 # Peaks
 init_freq_plot()
-plt.title(f"{scale_str}_peaks")
+plt.title(f"{scale_str}_{f'{type}_' if scaleby=='balanced' else ''}peaks")
 if pmf_peak is not None:
     plt.plot(aep, [pmf_peak] * len(aep), color="grey", linestyle="dashed", label="PMF Peak")
 
@@ -325,13 +329,13 @@ plt.plot(ffa.iloc[:, 0], ffa.iloc[:, 3], color='0', linewidth=0.5, linestyle="da
 plt.plot(ffa.iloc[:, 0], ffa.iloc[:, 4], color='0', linewidth=0.5, linestyle="dashdot", alpha=1, label='_nolegend_')
 
 plt.legend(loc="lower right", title="Hydrograph", prop={'size': 7})
-xfile = f"plots/{site}_check_peaks_{scale_str}.jpg"
+xfile = f"plots/{site}_check_peaks_{scale_str}{f'_{type}' if scaleby=='balanced' else ''}.jpg"
 plt.savefig(xfile, bbox_inches='tight', dpi=300)
 
 # Volumes
 for d in range(0, len(vfa_durs)):
     init_freq_plot()
-    plt.title(f"{scale_str}_{vfa_durs[d] / 24}-day")
+    plt.title(f"{scale_str}_{vfa_durs[d] / 24}-day {f'{type}' if scaleby=='balanced' else ''}")
     if pmf_volumes is not None:
         plt.plot(aep, [pmf_volumes[d]] * len(aep), color="grey", linestyle="dashed", label="PMF Volume")
 
@@ -341,5 +345,5 @@ for d in range(0, len(vfa_durs)):
     plt.plot(vfa.iloc[:, 0], vfa.loc[:, str(vfa_durs[d])], color='0', linewidth=2,
              label=f"{int(vfa_durs[d] / 24)}-day Frequency")
     plt.legend(loc="lower right", title="Hydrograph", prop={'size': 7})
-    xfile = f"plots/{site}_check_{vfa_durs[d]}_{scale_str}.jpg"
+    xfile = f"plots/{site}_check_{vfa_durs[d]}_{scale_str}{f'_{type}' if scaleby=='balanced' else ''}.jpg"
     plt.savefig(xfile, bbox_inches='tight', dpi=300)
