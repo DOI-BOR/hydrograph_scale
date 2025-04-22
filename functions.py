@@ -430,8 +430,7 @@ def pav_scale(peak_rp, Q_rp, hydro, baseflow=False, partial=False):
 
 def peakonly_scale(peak_rp,hydro):
     """
-    The concept of peak and volume scaling is scaling the hydrograph to the peak, then correct the rest of the
-    hydrograph ordinates to have the correct volume.
+    Scales the hydrograph to the peak, slowly transitioning to no adjustment at the start and end (low flows).
 
     :param peak_rp: float, the desired peak
     :param hydro: 1D array, the input hydrograph
@@ -465,10 +464,9 @@ def peakonly_scale(peak_rp,hydro):
 
 def volumeonly_scale(Q_rp,hydro):
     """
-    The concept of peak and volume scaling is scaling the hydrograph to the peak, then correct the rest of the
-    hydrograph ordinates to have the correct volume.
+    Scales the hydrograph from the start and end (low flows), while leaving the peak unchanged.
 
-    :param peak_rp: float, the desired peak
+    :param Q_rp: float, the desired average flow (volume)
     :param hydro: 1D array, the input hydrograph
     :return: 1D array, the scaled hydrograph
     """
